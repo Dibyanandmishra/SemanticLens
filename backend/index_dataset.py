@@ -1,31 +1,21 @@
 import os
 import pickle
 from feature_extractor import extract_features
-from moondream import generate_caption, extract_tags   # ✅ ADD THIS
 
 DATASET_PATH = "dataset/coco_subset"
 OUTPUT_FILE = "features.pkl"
 
 features_db = {}
 
-for img_name in os.listdir(DATASET_PATH):
+for img_name in sorted(os.listdir(DATASET_PATH))[:20]:
     img_path = os.path.join(DATASET_PATH, img_name)
 
     try:
-        # Step 1: Extract features
+        # Only extract features (FAST)
         features = extract_features(img_path)
 
-        # Step 2: Generate caption
-        caption = generate_caption(img_path)
-
-        # Step 3: Extract tags
-        tags = extract_tags(caption)
-
-        # Step 4: Store everything
         features_db[img_name] = {
-            "features": features,
-            "caption": caption,
-            "tags": tags
+            "features": features
         }
 
         print(f"Processed: {img_name}")

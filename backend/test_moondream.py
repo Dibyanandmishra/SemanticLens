@@ -1,4 +1,4 @@
-from moondream import generate_caption, extract_tags
+from moondream_api import generate_caption, extract_tags
 
 image_path = "dataset/coco_subset/000000002148.jpg"
 

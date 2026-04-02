@@ -1,6 +1,11 @@
 venv/
 .env
 __pycache__/
-venv
 dataset/
 annotations/
+uploads/
+cache/captions_cache.pkl
+features.pkl
+*.pyc
+*.pyo
+.DS_Store
