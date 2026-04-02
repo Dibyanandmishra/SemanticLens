@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -25,7 +26,7 @@ log = logging.getLogger("semanticlens.app")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from search_engine import search, features_db, captions_cache
+from search_engine import run_search_pipeline, _load_index
 
 
 @asynccontextmanager
@@ -35,12 +36,8 @@ async def lifespan(app: FastAPI):
         log.warning("MOONDREAM_API_KEY is not set — caption generation will fail")
     else:
         log.info("Moondream API key loaded")
-
-    log.info(
-        "Startup complete — %d indexed images, %d cached captions",
-        len(features_db),
-        len(captions_cache),
-    )
+    indexed_images = len(_load_index())
+    log.info("Startup complete — %d indexed images", indexed_images)
     yield
     log.info("Shutting down")
 
@@ -58,13 +55,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR.mkdir(exist_ok=True)
+app.mount("/dataset", StaticFiles(directory=str(BASE_DIR / "dataset")), name="dataset")
 
 
 def _save_upload(upload: UploadFile) -> str:
@@ -90,20 +92,28 @@ def _validate_image(file: UploadFile):
 
 @app.get("/health")
 async def health():
+    indexed_images = len(_load_index())
     return {
         "status": "ok",
-        "indexed_images": len(features_db),
-        "cached_captions": len(captions_cache),
+        "indexed_images": indexed_images,
     }
 
 
-@app.post("/search-by-image")
+@app.post("/search")
 @limiter.limit("5/minute")
-async def search_by_image(
+async def search(
     request: Request,
     file: UploadFile = File(...),
+    query: str | None = Form(default=None),
     top_k: int = Form(default=5),
 ):
+    log.info(
+        "Request received: /search file=%s query=%s top_k=%s from=%s",
+        file.filename,
+        query or "",
+        top_k,
+        request.client.host if request.client else "unknown",
+    )
     _validate_image(file)
 
     if top_k < 1 or top_k > 50:
@@ -111,59 +121,10 @@ async def search_by_image(
 
     saved_path = _save_upload(file)
     try:
-        results = search(image_path=saved_path, top_k=top_k)
-        return {"results": results, "count": len(results), "mode": "image"}
+        payload = run_search_pipeline(saved_path, text_query=query, top_k=top_k)
+        return payload
     except Exception as e:
-        log.exception("search-by-image failed")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _cleanup(saved_path)
-
-
-@app.post("/search-by-text")
-@limiter.limit("10/minute")
-async def search_by_text(
-    request: Request,
-    query: str = Form(...),
-    top_k: int = Form(default=5),
-):
-    query = query.strip()
-    if not query:
-        raise HTTPException(status_code=400, detail="Query text cannot be empty")
-
-    if top_k < 1 or top_k > 50:
-        raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
-
-    try:
-        results = search(text_query=query, top_k=top_k)
-        return {"results": results, "count": len(results), "mode": "text"}
-    except Exception as e:
-        log.exception("search-by-text failed")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/search-hybrid")
-@limiter.limit("5/minute")
-async def search_hybrid(
-    request: Request,
-    file: UploadFile = File(...),
-    query: str = Form(...),
-    top_k: int = Form(default=5),
-):
-    _validate_image(file)
-    query = query.strip()
-    if not query:
-        raise HTTPException(status_code=400, detail="Query text cannot be empty")
-
-    if top_k < 1 or top_k > 50:
-        raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
-
-    saved_path = _save_upload(file)
-    try:
-        results = search(image_path=saved_path, text_query=query, top_k=top_k)
-        return {"results": results, "count": len(results), "mode": "hybrid"}
-    except Exception as e:
-        log.exception("search-hybrid failed")
+        log.exception("/search failed")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _cleanup(saved_path)

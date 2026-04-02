@@ -1,24 +1,21 @@
-import torch
-import torchvision.models as models
-import torchvision.transforms as transforms
-from PIL import Image
-
-model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-model = torch.nn.Sequential(*list(model.children())[:-1])
-model.eval()
-
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+from pathlib import Path
+import cv2
+import numpy as np
 
 
-def extract_features(image_path: str):
-    image = Image.open(image_path).convert("RGB")
-    tensor = transform(image).unsqueeze(0)
+def extract_features(image_path: str) -> np.ndarray:
+    path = Path(image_path)
+    print(f"[feature_extractor] reading image: {path}")
 
-    with torch.no_grad():
-        features = model(tensor)
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {image_path}")
 
-    return features.flatten().numpy()
+    image = cv2.imread(str(path))
+    if image is None:
+        raise ValueError(f"OpenCV failed to decode image: {image_path}")
+
+    resized = cv2.resize(image, (224, 224))
+    histogram = cv2.calcHist([resized], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+    histogram = cv2.normalize(histogram, histogram).flatten().astype(np.float32)
+    print(f"[feature_extractor] extracted feature length: {histogram.shape[0]}")
+    return histogram
