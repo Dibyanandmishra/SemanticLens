@@ -35,7 +35,8 @@ def _encode_image(image_path: str) -> str:
 
 def generate_caption(image_path: str) -> str:
     if not API_KEY:
-        raise RuntimeError("MOONDREAM_API_KEY not set — add it to your .env file")
+        log.warning("MOONDREAM_API_KEY not set — skipping caption generation")
+        return ""
 
     if not os.path.isfile(image_path):
         log.error("Image file not found: %s", image_path)

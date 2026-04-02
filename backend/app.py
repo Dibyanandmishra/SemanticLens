@@ -11,9 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
@@ -36,8 +33,10 @@ async def lifespan(app: FastAPI):
         log.warning("MOONDREAM_API_KEY is not set — caption generation will fail")
     else:
         log.info("Moondream API key loaded")
+
     indexed_images = len(_load_index())
     log.info("Startup complete — %d indexed images", indexed_images)
+
     yield
     log.info("Shutting down")
 
@@ -49,32 +48,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
+# ✅ FIXED CORS (IMPORTANT FOR DEPLOYMENT)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],  # allow all (safe for demo)
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 BASE_DIR = Path(__file__).resolve().parent.parent
+
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# ✅ Serve dataset images
 app.mount("/dataset", StaticFiles(directory=str(BASE_DIR / "dataset")), name="dataset")
 
 
 def _save_upload(upload: UploadFile) -> str:
     suffix = Path(upload.filename).suffix if upload.filename else ".jpg"
     suffix = suffix or ".jpg"
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=str(UPLOAD_DIR))
     shutil.copyfileobj(upload.file, tmp)
     tmp.close()
+
     return tmp.name
 
 
@@ -87,7 +85,7 @@ def _cleanup(path: str):
 
 def _validate_image(file: UploadFile):
     if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Upload must be an image file (JPEG, PNG, or WebP)")
+        raise HTTPException(status_code=400, detail="Upload must be an image file")
 
 
 @app.get("/health")
@@ -100,7 +98,6 @@ async def health():
 
 
 @app.post("/search")
-@limiter.limit("5/minute")
 async def search(
     request: Request,
     file: UploadFile = File(...),
@@ -108,31 +105,35 @@ async def search(
     top_k: int = Form(default=5),
 ):
     log.info(
-        "Request received: /search file=%s query=%s top_k=%s from=%s",
+        "Request received: /search file=%s query=%s top_k=%s",
         file.filename,
         query or "",
         top_k,
-        request.client.host if request.client else "unknown",
     )
+
     _validate_image(file)
 
     if top_k < 1 or top_k > 50:
         raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
 
     saved_path = _save_upload(file)
+
     try:
         payload = run_search_pipeline(saved_path, text_query=query, top_k=top_k)
         return payload
+
     except Exception as e:
         log.exception("/search failed")
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         _cleanup(saved_path)
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
+async def global_exception_handler(request: Request, exc: Exception):
     log.exception("Unhandled exception")
+
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},

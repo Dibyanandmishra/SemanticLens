@@ -32,8 +32,9 @@ function DemoSection() {
 
       const imagePaths = payload?.images || []
       const normalized = imagePaths.map((path) => {
-        const cleanPath = String(path || '').replace(/^\/+/, '')
-        return `${apiClient.defaults.baseURL}/${cleanPath}`
+        const baseUrl = String(apiClient.defaults.baseURL || '').replace(/\/$/, '')
+        const imagePath = String(path || '').startsWith('/') ? path : `/${path}`
+        return `${baseUrl}${imagePath}`
       })
 
       console.log('[UI] search completed', { resultCount: normalized.length })

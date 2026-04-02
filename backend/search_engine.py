@@ -57,4 +57,4 @@ def run_search_pipeline(query_image_path: str, text_query: str | None = None, to
         if lowered and caption and lowered not in caption.lower():
             print("[search_engine] text query does not match caption; returning visual results only")
 
-    return {"caption": caption, "images": [row["image"] for row in results], "results": results}
+    return {"caption": caption, "images": ["/" + row["image"].lstrip("/") for row in results], "results": results}
